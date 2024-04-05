@@ -1,9 +1,17 @@
-# from ulab import numpy as np
-from imu import MPU6050
-from time import sleep
 from machine import Pin, I2C
+from time import sleep
+from imu import MPU6050
+from ble_simple_peripheral import BLESimplePeripheral
+import bluetooth
 import math
-#from enum import Enum
+import micropython
+
+
+ble = bluetooth.BLE()
+sp = BLESimplePeripheral(ble)
+
+led = Pin("LED", Pin.OUT)
+led_state = 0
 
 WINDOW_SIZE = 75
 ACCEL_THRESHOLD = 2
@@ -25,9 +33,25 @@ DATA_WINDOW_ACCEL = []
 #    RIGHT = 3
 #    LEFT = 4
 
+# Define a callback function to handle received data
+def on_rx(data):
+    print("Data received: ", data)
+    global led_state
+
+    if data == b"toggle":
+        led.value(not led_state)
+        led_state = 1 - led_state
+        sp.send("LED toggled\r\n")
+
+# # Start an infinite loop
+# while True:
+#     if sp.is_connected():
+#         sp.on_write(on_rx)
+
+micropython.alloc_emergency_exception_buf(100)
+
 
 def process_gyroscope_data():
-
     max_x = max(DATA_WINDOW_X)
     min_x = min(DATA_WINDOW_X)
 
@@ -60,9 +84,20 @@ def determine_direction(max_x: float, max_y: float, min_x: float, min_y: float, 
         # print("Left")
         return 4
     
-def send_to_app(inst_accel: float, gyro_x: float, gyro_y: float, gyro_z: float, peak_accel: float, impact_direction = None):
-    # send all this data via bluetooth\
-    print(f"Accel: {inst_accel}, Gyro: <{gyro_x}, {gyro_y}, {gyro_z}>, Peak Accel: {peak_accel}, Impact Dir: {impact_direction}")
+def send_to_app(inst_accel: float, gyro_x: float, gyro_y: float, gyro_z: float, peak_accel: float, impact_direction = 0):
+    json = {
+        "accel": inst_accel,
+        "gyro": {
+            "x": gyro_x,
+            "y": gyro_y,
+            "z": gyro_z
+        },
+        "peak_accel": peak_accel,
+        "impact_direction": impact_direction
+    }
+    jsonString = str(json)
+    sp.send(jsonString)
+    # print(f"Accel: {inst_accel}, Gyro: <{gyro_x}, {gyro_y}, {gyro_z}>, Peak Accel: {peak_accel}, Impact Dir: {impact_direction}")
     return
 
 def process_accelerometer_data():
@@ -99,12 +134,13 @@ def main():
             DATA_WINDOW_ACCEL.append(accel_magn)
             
 
-            if len(DATA_WINDOW_X) == WINDOW_SIZE:
+            if len(DATA_WINDOW_X) >= WINDOW_SIZE:
                 impact_direction = process_gyroscope_data()
                 max_accel = process_accelerometer_data()
 
                 DATA_WINDOW_X.clear()
                 DATA_WINDOW_Y.clear()
+                DATA_WINDOW_ACCEL.clear()
                 
                 start = False
                 
@@ -113,7 +149,6 @@ def main():
         send_to_app(accel_magn, gyro_x, gyro_y, gyro_z, max_accel, impact_direction)
 
         sleep(0.001)
-    
 
 if __name__ == "__main__":
     main()
